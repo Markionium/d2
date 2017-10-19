@@ -26,15 +26,16 @@ describe('D2', () => {
     let loggerMock;
     let i18nMock;
 
+    const schemasResponse = {
+        schemas: [
+            fixtures.get('/api/schemas/dataElement'),
+            fixtures.get('/api/schemas/dataElement'),
+            fixtures.get('/api/schemas/dataElement'),
+        ],
+    };
+
     beforeEach(() => {
         ModelDefinitionMock.createFromSchema.callCount = 0;
-        const schemasResponse = {
-            schemas: [
-                fixtures.get('/api/schemas/dataElement'),
-                fixtures.get('/api/schemas/dataElement'),
-                fixtures.get('/api/schemas/dataElement'),
-            ],
-        };
 
         apiMock = {
             get: jest.fn()
@@ -118,6 +119,45 @@ describe('D2', () => {
                     done();
                 })
                 .catch(done);
+        });
+
+        it('should request the authorities when the default api is used', () => {
+            return d2.init({ baseUrl: './api' }, apiMock)
+                .then(() => {
+                    expect(apiMock.get).toBeCalledWith('me/authorization');
+                });
+        });
+
+        it('should not request separate authorities when a versioned endpoint is used', () => {
+            apiMock.get = jest.fn()
+                .mockReturnValueOnce(Promise.resolve(schemasResponse))
+                .mockReturnValueOnce(new Promise(resolve => resolve(fixtures.get('/api/attributes'))))
+                .mockReturnValueOnce(Promise.resolve({
+                    authorties: ['ALL'],
+                }))
+                .mockReturnValueOnce(Promise.resolve({ version: '2.21' }))
+                .mockReturnValueOnce(Promise.resolve({ apps: [] }));
+
+            return d2.init({ baseUrl: './api/27' }, apiMock)
+                .then(() => {
+                    expect(apiMock.get).not.toBeCalledWith('me/authorization');
+                });
+        });
+
+        it('should grab the authorties from the currentUser when a versioned endpoint is used', () => {
+            apiMock.get = jest.fn()
+                .mockReturnValueOnce(Promise.resolve(schemasResponse))
+                .mockReturnValueOnce(new Promise(resolve => resolve(fixtures.get('/api/attributes'))))
+                .mockReturnValueOnce(Promise.resolve({
+                    authorities: ['ALL'],
+                }))
+                .mockReturnValueOnce(Promise.resolve({ version: '2.21' }))
+                .mockReturnValueOnce(Promise.resolve({ apps: [] }));
+
+            return d2.init({ baseUrl: './api/27' }, apiMock)
+                .then(({ currentUser }) => {
+                    expect(currentUser.authorities.has('ALL')).toBe(true);
+                });
         });
     });
 

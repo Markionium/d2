@@ -74,20 +74,28 @@ export class Deferred {
         return new Deferred();
     }
 }
+const apiUrlWithVersionRegExp = /api\/([1-9][0-9])/;
+
+export function isVersionedApiUrl(url = '') {
+    return apiUrlWithVersionRegExp.test(url);
+}
+
+function extractApiVersionFromUrl(url = '') {
+    const match = url.match(apiUrlWithVersionRegExp);
+
+    return match && match[1];
+}
 
 export function updateAPIUrlWithBaseUrlVersionNumber(apiUrl, baseUrl) {
     if (!baseUrl || !apiUrl) {
         return apiUrl;
     }
 
-    const apiUrlWithVersionRexExp = /api\/([1-9][0-9])/;
-    const apiVersionMatch = baseUrl.match(apiUrlWithVersionRexExp);
+    const baseUrlHasVersion = isVersionedApiUrl(baseUrl);
+    const isApiUrlWithoutVersion = !isVersionedApiUrl(apiUrl);
 
-    const baseUrlHasVersion = apiVersionMatch && apiVersionMatch[1];
-    const apiUrlHasVersion = apiUrl && !apiUrlWithVersionRexExp.test(apiUrl);
-
-    if (baseUrlHasVersion && apiUrlHasVersion) {
-        const version = apiVersionMatch[1];
+    if (baseUrlHasVersion && isApiUrlWithoutVersion) {
+        const version = extractApiVersionFromUrl(baseUrl);
 
         // Inject the current api version number into the endPoint urls
         return apiUrl.replace(/api/, `api/${version}`);

@@ -14,7 +14,7 @@
  *  .then(d2 => console.log(d2.currentUser.name));
  */
 import 'whatwg-fetch';
-import { pick, Deferred, updateAPIUrlWithBaseUrlVersionNumber } from './lib/utils';
+import { pick, Deferred, updateAPIUrlWithBaseUrlVersionNumber, isVersionedApiUrl } from './lib/utils';
 import Logger from './logger/Logger';
 import model from './model';
 import Api from './api/Api';
@@ -90,7 +90,7 @@ export function getUserSettings(ApiClass = Api) {
     return api.get('userSettings');
 }
 
-function getModelRequests(api, schemaNames) {
+function executeModelRequests(api, schemaNames) {
     const modelRequests = [];
     const loadSchemaForName = schemaName => api.get(`schemas/${schemaName}`, { fields: fieldsForSchemas });
 
@@ -118,6 +118,39 @@ function getModelRequests(api, schemaNames) {
 
 
     return modelRequests;
+}
+
+function getUserRequests(ApiClass, baseUrl) {
+    const api = ApiClass.getApi();
+    const requests = [
+        api.get('me', { fields: ':all,organisationUnits[id],userGroups[id],userCredentials[:all,!user,userRoles[id]' }),
+    ];
+
+    // There is a difference between the responses of /api/me and /api/{version}/me
+    // if a versioned endPoint is used we do not need to request the authorities and userSettings
+    // as these are part of the "new" payload on the /api/{version}/me endpoints.
+    return isVersionedApiUrl(baseUrl) ? requests : requests.concat([
+        requests.push(api.get('me/authorization')),
+        getUserSettings(ApiClass),
+    ]);
+}
+
+function executeCurrentUserRequests(ApiClass, baseUrl) {
+    const userRequests = getUserRequests(ApiClass, baseUrl);
+
+    return Promise.all(userRequests)
+        .then(([currentUser, authorities, userSettings]) => ({
+            ...currentUser,
+            authorities: authorities || currentUser.authorities,
+            settings: userSettings || currentUser.settings,
+        }));
+}
+
+function executeSystemRequests(api) {
+    return [
+        api.get('system/info'),
+        api.get('apps'),
+    ];
 }
 
 /**
@@ -229,34 +262,23 @@ export function init(initConfig, ApiClass = Api, logger = Logger.getLogger()) {
         deferredD2Init = Deferred.create();
     }
 
-    const modelRequests = getModelRequests(api, config.schemas);
-
-    const userRequests = [
-        api.get('me', { fields: ':all,organisationUnits[id],userGroups[id],userCredentials[:all,!user,userRoles[id]' }),
-        api.get('me/authorization'),
-        getUserSettings(ApiClass),
-    ];
-
-    const systemRequests = [
-        api.get('system/info'),
-        api.get('apps'),
-    ];
+    const modelRequests = executeModelRequests(api, config.schemas);
+    const currentUserRequest = executeCurrentUserRequests(ApiClass, config.baseUrl);
+    const systemRequests = executeSystemRequests(api);
 
     return Promise.all([
         ...modelRequests,
-        ...userRequests,
+        currentUserRequest,
         ...systemRequests,
         d2.i18n.load(),
     ])
-        .then((res) => {
+        .then(([schemas, attributes, currentUser, systemInfo, apps]) => {
             const responses = {
-                schemas: pick('schemas')(res[0]),
-                attributes: pick('attributes')(res[1]),
-                currentUser: res[2],
-                authorities: res[3],
-                userSettings: res[4],
-                systemInfo: res[5],
-                apps: res[6],
+                schemas: pick('schemas')(schemas),
+                attributes: pick('attributes')(attributes),
+                currentUser,
+                systemInfo,
+                apps,
             };
 
             responses.schemas
@@ -309,9 +331,9 @@ export function init(initConfig, ApiClass = Api, logger = Logger.getLogger()) {
              */
             d2.currentUser = CurrentUser.create(
                 responses.currentUser,
-                responses.authorities,
+                responses.currentUser.authorities,
                 d2.models,
-                responses.userSettings,
+                responses.currentUser.settings,
             );
             d2.system.setSystemInfo(responses.systemInfo);
             d2.system.setInstalledApps(responses.apps);
